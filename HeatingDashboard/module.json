@@ -1,0 +1,12 @@
+{
+    "id": "{F0513F3A-D3B6-4B0F-AC8B-D6E9FE76E286}",
+    "name": "Heating Dashboard",
+    "type": 3,
+    "vendor": "Martin Wilkens",
+    "aliases": [],
+    "dependencies": [],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "HTD"
+}

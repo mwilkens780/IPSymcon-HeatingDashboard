@@ -1,0 +1,106 @@
+{
+  "elements": [
+    {
+      "type": "NumberSpinner",
+      "name": "update_interval",
+      "caption": "Aktualisierungsintervall (Sekunden)",
+      "minimum": 60,
+      "suffix": "s"
+    },
+    {
+      "type": "Label",
+      "caption": "Alle Felder sind mit den Objekt-IDs dieser Installation vorbelegt (VitoConnect-Instanz). Bei Bedarf ueber die Variablen-Auswahl anpassen."
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Kennzahlen",
+      "expanded": true,
+      "items": [
+        { "type": "SelectVariable", "name": "var_outside_temp", "caption": "Aussentemperatur" },
+        { "type": "SelectVariable", "name": "var_dhw_temp",      "caption": "Warmwasser-Speicher (Ist)" },
+        { "type": "SelectVariable", "name": "var_hk1_supply",    "caption": "Heizkreis 1 Vorlauftemperatur" },
+        { "type": "SelectVariable", "name": "var_hk2_supply",    "caption": "Heizkreis 2 Vorlauftemperatur" },
+        { "type": "SelectVariable", "name": "var_burner_active", "caption": "Brenner aktiv" },
+        { "type": "SelectVariable", "name": "var_burner_hours",  "caption": "Brenner-Laufzeit gesamt (h)" }
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Sollwerte Heizkreis 1",
+      "expanded": true,
+      "items": [
+        { "type": "SelectVariable", "name": "var_hk1_normal_temp",  "caption": "Normal (Soll)",    "requiredAction": 1 },
+        { "type": "SelectVariable", "name": "var_hk1_reduced_temp", "caption": "Reduziert (Soll)", "requiredAction": 1 },
+        { "type": "SelectVariable", "name": "var_hk1_mode",         "caption": "Betriebsart",      "requiredAction": 1 }
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Sollwerte Heizkreis 2",
+      "expanded": true,
+      "items": [
+        { "type": "SelectVariable", "name": "var_hk2_normal_temp",  "caption": "Normal (Soll)",    "requiredAction": 1 },
+        { "type": "SelectVariable", "name": "var_hk2_reduced_temp", "caption": "Reduziert (Soll)", "requiredAction": 1 },
+        { "type": "SelectVariable", "name": "var_hk2_mode",         "caption": "Betriebsart",      "requiredAction": 1 }
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Warmwasser",
+      "expanded": true,
+      "items": [
+        { "type": "SelectVariable", "name": "var_dhw_target_temp", "caption": "Warmwasser (Soll)", "requiredAction": 1 }
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Verbrauch Gas (m³)",
+      "expanded": false,
+      "items": [
+        { "type": "RowLayout", "items": [
+          { "type": "SelectVariable", "name": "var_gas_heating_day",   "caption": "Heizung: Tag" },
+          { "type": "SelectVariable", "name": "var_gas_heating_week",  "caption": "Heizung: Woche" },
+          { "type": "SelectVariable", "name": "var_gas_heating_month", "caption": "Heizung: Monat" },
+          { "type": "SelectVariable", "name": "var_gas_heating_year",  "caption": "Heizung: Jahr" }
+        ]},
+        { "type": "RowLayout", "items": [
+          { "type": "SelectVariable", "name": "var_gas_dhw_day",   "caption": "Warmwasser: Tag" },
+          { "type": "SelectVariable", "name": "var_gas_dhw_week",  "caption": "Warmwasser: Woche" },
+          { "type": "SelectVariable", "name": "var_gas_dhw_month", "caption": "Warmwasser: Monat" },
+          { "type": "SelectVariable", "name": "var_gas_dhw_year",  "caption": "Warmwasser: Jahr" }
+        ]},
+        { "type": "RowLayout", "items": [
+          { "type": "SelectVariable", "name": "var_gas_total_day",   "caption": "Gesamt: Tag" },
+          { "type": "SelectVariable", "name": "var_gas_total_week",  "caption": "Gesamt: Woche" },
+          { "type": "SelectVariable", "name": "var_gas_total_month", "caption": "Gesamt: Monat" },
+          { "type": "SelectVariable", "name": "var_gas_total_year",  "caption": "Gesamt: Jahr" }
+        ]}
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Verbrauch Strom (kWh)",
+      "expanded": false,
+      "items": [
+        { "type": "RowLayout", "items": [
+          { "type": "SelectVariable", "name": "var_power_total_day",   "caption": "Tag" },
+          { "type": "SelectVariable", "name": "var_power_total_week",  "caption": "Woche" },
+          { "type": "SelectVariable", "name": "var_power_total_month", "caption": "Monat" },
+          { "type": "SelectVariable", "name": "var_power_total_year",  "caption": "Jahr" }
+        ]}
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "Button",
+      "caption": "Jetzt aktualisieren",
+      "onClick": "HTD_Refresh($id);"
+    }
+  ],
+  "status": [
+    { "code": 102, "icon": "active",   "caption": "Aktiv" },
+    { "code": 200, "icon": "error",    "caption": "Fehler – Details im IPS-Log" },
+    { "code": 201, "icon": "inactive", "caption": "Nicht konfiguriert – Variablen in den Einstellungen auswaehlen" }
+  ]
+}
