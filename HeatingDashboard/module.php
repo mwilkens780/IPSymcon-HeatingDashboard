@@ -78,6 +78,13 @@ class HeatingDashboard extends IPSModule
         // Archive Control / AC_GetLoggedValues().
         $this->RegisterAttributeString('temp_history', '[]');
 
+        // VitoConnect's own module collapses the Viessmann API's day/week/month
+        // arrays down to a single "current period" value (see its ParseData(),
+        // which keeps only $property->value[0]) — the previous period is not
+        // exposed anywhere. We reconstruct it ourselves by watching for the
+        // counter to drop (period rollover) and remembering the last value seen.
+        $this->RegisterAttributeString('period_prev', '{}');
+
         $this->RegisterTimer('UpdateTimer', 0, 'HTD_Refresh($_IPS[\'TARGET\']);');
 
         $this->SetVisualizationType(1);
@@ -118,6 +125,7 @@ class HeatingDashboard extends IPSModule
     {
         try {
             $this->sampleHistory();
+            $this->trackPeriods();
             $data = $this->collectData();
             $this->pushValue('__all__', $data);
             $this->SetStatus(102);
@@ -217,6 +225,57 @@ class HeatingDashboard extends IPSModule
         $this->WriteAttributeString('temp_history', json_encode($hist));
     }
 
+    /**
+     * Detects period rollovers (day/week/month counters resetting to a lower
+     * value) across all four consumption groups and remembers the last value
+     * seen before each rollover as "previous period". Must only be called from
+     * Refresh() (timer-driven) — it mutates state, unlike collectData()/prevPeriod().
+     */
+    private function trackPeriods(): void
+    {
+        $groups = [
+            'gasHeating' => ['var_gas_heating_day', 'var_gas_heating_week', 'var_gas_heating_month'],
+            'gasDhw'     => ['var_gas_dhw_day', 'var_gas_dhw_week', 'var_gas_dhw_month'],
+            'gasTotal'   => ['var_gas_total_day', 'var_gas_total_week', 'var_gas_total_month'],
+            'powerTotal' => ['var_power_total_day', 'var_power_total_week', 'var_power_total_month'],
+        ];
+
+        $store = json_decode($this->ReadAttributeString('period_prev'), true);
+        if (!is_array($store)) {
+            $store = [];
+        }
+
+        foreach ($groups as $groupKey => [$dayProp, $weekProp, $monthProp]) {
+            foreach (['day' => $dayProp, 'week' => $weekProp, 'month' => $monthProp] as $periodKey => $prop) {
+                $value = $this->readVar($prop);
+                if ($value === null) {
+                    continue;
+                }
+                $value = (float) $value;
+                $key   = $groupKey . '_' . $periodKey;
+                $entry = $store[$key] ?? ['last' => null, 'prev' => null];
+                if ($entry['last'] !== null && $value < $entry['last'] - 0.001) {
+                    $entry['prev'] = $entry['last']; // counter dropped -> period rolled over
+                }
+                $entry['last'] = $value;
+                $store[$key]   = $entry;
+            }
+        }
+
+        $this->WriteAttributeString('period_prev', json_encode($store));
+    }
+
+    /** Read-only lookup of a previously-tracked period value (see trackPeriods()). */
+    private function prevPeriod(string $groupKey, string $periodKey): ?float
+    {
+        $store = json_decode($this->ReadAttributeString('period_prev'), true);
+        if (!is_array($store)) {
+            return null;
+        }
+        $key = $groupKey . '_' . $periodKey;
+        return isset($store[$key]['prev']) ? (float) $store[$key]['prev'] : null;
+    }
+
     /** Extracts one series as [[ts, value], ...] from the rolling cache, dropping nulls, limited to CHART_SPAN_SEC. */
     private function historySeries(string $key): array
     {
@@ -299,18 +358,26 @@ class HeatingDashboard extends IPSModule
             'gasHeating' => [
                 'day' => $this->readVar('var_gas_heating_day'), 'week' => $this->readVar('var_gas_heating_week'),
                 'month' => $this->readVar('var_gas_heating_month'), 'year' => $this->readVar('var_gas_heating_year'),
+                'prevDay' => $this->prevPeriod('gasHeating', 'day'), 'prevWeek' => $this->prevPeriod('gasHeating', 'week'),
+                'prevMonth' => $this->prevPeriod('gasHeating', 'month'),
             ],
             'gasDhw' => [
                 'day' => $this->readVar('var_gas_dhw_day'), 'week' => $this->readVar('var_gas_dhw_week'),
                 'month' => $this->readVar('var_gas_dhw_month'), 'year' => $this->readVar('var_gas_dhw_year'),
+                'prevDay' => $this->prevPeriod('gasDhw', 'day'), 'prevWeek' => $this->prevPeriod('gasDhw', 'week'),
+                'prevMonth' => $this->prevPeriod('gasDhw', 'month'),
             ],
             'gasTotal' => [
                 'day' => $this->readVar('var_gas_total_day'), 'week' => $this->readVar('var_gas_total_week'),
                 'month' => $this->readVar('var_gas_total_month'), 'year' => $this->readVar('var_gas_total_year'),
+                'prevDay' => $this->prevPeriod('gasTotal', 'day'), 'prevWeek' => $this->prevPeriod('gasTotal', 'week'),
+                'prevMonth' => $this->prevPeriod('gasTotal', 'month'),
             ],
             'powerTotal' => [
                 'day' => $this->readVar('var_power_total_day'), 'week' => $this->readVar('var_power_total_week'),
                 'month' => $this->readVar('var_power_total_month'), 'year' => $this->readVar('var_power_total_year'),
+                'prevDay' => $this->prevPeriod('powerTotal', 'day'), 'prevWeek' => $this->prevPeriod('powerTotal', 'week'),
+                'prevMonth' => $this->prevPeriod('powerTotal', 'month'),
             ],
 
             'histOutside' => $this->historySeries('outside'),
@@ -384,11 +451,15 @@ class HeatingDashboard extends IPSModule
 
         $localMax = max(array_filter([$day, $week, $month], static fn ($v) => $v !== null)) ?: 1.0;
 
+        $prevMap = ['Tag' => $vals['prevDay'] ?? null, 'Woche' => $vals['prevWeek'] ?? null, 'Monat' => $vals['prevMonth'] ?? null];
+
         $bars = '';
         foreach (['Tag' => $day, 'Woche' => $week, 'Monat' => $month] as $xlabel => $v) {
-            $h    = $v !== null ? max(2, (int) round(($v / $localMax) * 60)) : 2;
-            $vStr = $v !== null ? $this->fmtNum($v, $v < 10 ? 1 : 0) : '–';
-            $bars .= "<div class='bar-col'><div class='bar-value'>{$vStr}</div>"
+            $h       = $v !== null ? max(2, (int) round(($v / $localMax) * 60)) : 2;
+            $vStr    = $v !== null ? $this->fmtNum($v, $v < 10 ? 1 : 0) : '–';
+            $prevVal = $prevMap[$xlabel] !== null ? (float) $prevMap[$xlabel] : null;
+            $prevStr = $prevVal !== null ? '(' . $this->fmtNum($prevVal, $prevVal < 10 ? 1 : 0) . ')' : '';
+            $bars .= "<div class='bar-col'><div class='bar-value'>{$vStr}</div><div class='bar-prev'>{$prevStr}</div>"
                 . "<div class='bar-track'><div class='bar-fill-v' style='height:{$h}px'></div></div>"
                 . "<div class='bar-xlabel'>{$xlabel}</div></div>";
         }
@@ -483,6 +554,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 .bar-row{display:flex;justify-content:space-around;align-items:flex-end;height:80px}
 .bar-col{display:flex;flex-direction:column;align-items:center;gap:2px}
 .bar-value{font-size:10px;font-weight:700;color:#d0e8ff}
+.bar-prev{font-size:8px;font-weight:400;color:#4a6a8a;min-height:10px}
 .bar-track{width:22px;height:60px;display:flex;align-items:flex-end}
 .bar-fill-v{width:100%;background:linear-gradient(180deg,#7ec8f0,#3a8abf);border-radius:3px 3px 0 0;transition:height .4s}
 .bar-xlabel{font-size:9px;color:#4a6a8a}
