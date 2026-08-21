@@ -489,11 +489,15 @@ class HeatingDashboard extends IPSModule
         return "<span id=\"{$id}\" class=\"badge {$cls}\">{$text}</span>";
     }
 
-    private function renderCurveInfo(string $id, ?float $shift, ?float $slope): string
+    /** Niveau/Neigung stacked vertically, meant to sit next to the dial-row for the same circuit. */
+    private function renderCurveInfo(string $idPrefix, ?float $shift, ?float $slope): string
     {
         $shiftStr = $shift !== null ? $this->fmtNum($shift, 1) : '–';
         $slopeStr = $slope !== null ? $this->fmtNum($slope, 1) : '–';
-        return "<div id=\"{$id}\" class=\"curve-info\">Heizkennlinie: Niveau {$shiftStr} · Neigung {$slopeStr}</div>";
+        return '<div class="curve-col">'
+            . "<div class=\"curve-item\"><span class=\"curve-label\">Niveau</span><span id=\"{$idPrefix}_shift\" class=\"curve-value\">{$shiftStr}</span></div>"
+            . "<div class=\"curve-item\"><span class=\"curve-label\">Neigung</span><span id=\"{$idPrefix}_slope\" class=\"curve-value\">{$slopeStr}</span></div>"
+            . '</div>';
     }
 
     private function renderMiniChart(string $id, string $label, array $series): string
@@ -654,7 +658,11 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 .chart-min{bottom:2px}
 .hk-block{display:flex;flex-direction:column;gap:6px;flex:none;background:#0f1c30;border-radius:10px;padding:8px}
 .hk-title{font-size:12px;font-weight:700;color:#d0e8ff}
-.curve-info{font-size:10px;color:#8aa8c8;text-align:center}
+.hk-main-row{display:flex;align-items:center;justify-content:center;gap:14px}
+.curve-col{display:flex;flex-direction:column;gap:4px}
+.curve-item{display:flex;flex-direction:column;gap:1px;background:#131f33;border-radius:8px;padding:4px 10px;min-width:64px}
+.curve-label{font-size:9px;color:#4a6a8a;text-transform:uppercase;letter-spacing:.03em}
+.curve-value{font-size:13px;font-weight:700;color:#d0e8ff}
 .mode-row{display:flex;gap:4px;flex-wrap:wrap}
 .mode-btn{flex:1;min-width:60px;background:#1a2535;border:1px solid #2a3a50;color:#8aa8c8;border-radius:6px;font-size:10px;padding:5px 2px;cursor:pointer}
 .mode-btn.mode-active{background:#1e4a6e;border-color:#3a8abf;color:#7ec8f0;font-weight:700}
@@ -687,8 +695,10 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 <div class="hk-block">
   <div id="hk1_title" class="hk-title">{$hk1Title}</div>
   {$hk1Modes}
-  <div class="dial-row">{$hk1Dials}</div>
-  {$hk1CurveInfo}
+  <div class="hk-main-row">
+    <div class="dial-row">{$hk1Dials}</div>
+    {$hk1CurveInfo}
+  </div>
 </div>
 
 <div class="current-grid">{$statTiles}</div>
@@ -698,8 +708,10 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 <div class="hk-block">
   <div id="hk2_title" class="hk-title">{$hk2Title}</div>
   {$hk2Modes}
-  <div class="dial-row">{$hk2Dials}</div>
-  {$hk2CurveInfo}
+  <div class="hk-main-row">
+    <div class="dial-row">{$hk2Dials}</div>
+    {$hk2CurveInfo}
+  </div>
 </div>
 
 <div class="hk-block">
@@ -857,8 +869,10 @@ window.handleMessage = function(raw) {
     setText('hk2_title', val.hk2_name ? val.hk2_name : 'Heizkreis 2');
 
     function fmt1(v) { return v == null ? '–' : v.toFixed(1).replace('.', ','); }
-    setText('hk1_curve', 'Heizkennlinie: Niveau ' + fmt1(val.hk1_shift) + ' · Neigung ' + fmt1(val.hk1_slope));
-    setText('hk2_curve', 'Heizkennlinie: Niveau ' + fmt1(val.hk2_shift) + ' · Neigung ' + fmt1(val.hk2_slope));
+    setText('hk1_shift', fmt1(val.hk1_shift));
+    setText('hk1_slope', fmt1(val.hk1_slope));
+    setText('hk2_shift', fmt1(val.hk2_shift));
+    setText('hk2_slope', fmt1(val.hk2_slope));
 
     renderMiniChart('chart_outside', val.histOutside);
     renderMiniChart('chart_hk1', val.histHk1);
