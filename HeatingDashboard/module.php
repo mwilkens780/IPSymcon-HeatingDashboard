@@ -226,18 +226,21 @@ class HeatingDashboard extends IPSModule
     }
 
     /**
-     * Detects period rollovers (day/week/month counters resetting to a lower
-     * value) across all four consumption groups and remembers the last value
-     * seen before each rollover as "previous period". Must only be called from
-     * Refresh() (timer-driven) — it mutates state, unlike collectData()/prevPeriod().
+     * Detects period rollovers (day/week/month/year counters resetting to a
+     * lower value) across all four consumption groups and remembers the last
+     * value seen before each rollover as "previous period". Must only be
+     * called from Refresh() (timer-driven) — it mutates state, unlike
+     * collectData()/prevPeriod(). The year rollover obviously only fires once
+     * a year, so "previous year" stays empty until the first Dec 31 -> Jan 1
+     * transition after install.
      */
     private function trackPeriods(): void
     {
         $groups = [
-            'gasHeating' => ['var_gas_heating_day', 'var_gas_heating_week', 'var_gas_heating_month'],
-            'gasDhw'     => ['var_gas_dhw_day', 'var_gas_dhw_week', 'var_gas_dhw_month'],
-            'gasTotal'   => ['var_gas_total_day', 'var_gas_total_week', 'var_gas_total_month'],
-            'powerTotal' => ['var_power_total_day', 'var_power_total_week', 'var_power_total_month'],
+            'gasHeating' => ['var_gas_heating_day', 'var_gas_heating_week', 'var_gas_heating_month', 'var_gas_heating_year'],
+            'gasDhw'     => ['var_gas_dhw_day', 'var_gas_dhw_week', 'var_gas_dhw_month', 'var_gas_dhw_year'],
+            'gasTotal'   => ['var_gas_total_day', 'var_gas_total_week', 'var_gas_total_month', 'var_gas_total_year'],
+            'powerTotal' => ['var_power_total_day', 'var_power_total_week', 'var_power_total_month', 'var_power_total_year'],
         ];
 
         $store = json_decode($this->ReadAttributeString('period_prev'), true);
@@ -245,8 +248,8 @@ class HeatingDashboard extends IPSModule
             $store = [];
         }
 
-        foreach ($groups as $groupKey => [$dayProp, $weekProp, $monthProp]) {
-            foreach (['day' => $dayProp, 'week' => $weekProp, 'month' => $monthProp] as $periodKey => $prop) {
+        foreach ($groups as $groupKey => [$dayProp, $weekProp, $monthProp, $yearProp]) {
+            foreach (['day' => $dayProp, 'week' => $weekProp, 'month' => $monthProp, 'year' => $yearProp] as $periodKey => $prop) {
                 $value = $this->readVar($prop);
                 if ($value === null) {
                     continue;
@@ -359,25 +362,25 @@ class HeatingDashboard extends IPSModule
                 'day' => $this->readVar('var_gas_heating_day'), 'week' => $this->readVar('var_gas_heating_week'),
                 'month' => $this->readVar('var_gas_heating_month'), 'year' => $this->readVar('var_gas_heating_year'),
                 'prevDay' => $this->prevPeriod('gasHeating', 'day'), 'prevWeek' => $this->prevPeriod('gasHeating', 'week'),
-                'prevMonth' => $this->prevPeriod('gasHeating', 'month'),
+                'prevMonth' => $this->prevPeriod('gasHeating', 'month'), 'prevYear' => $this->prevPeriod('gasHeating', 'year'),
             ],
             'gasDhw' => [
                 'day' => $this->readVar('var_gas_dhw_day'), 'week' => $this->readVar('var_gas_dhw_week'),
                 'month' => $this->readVar('var_gas_dhw_month'), 'year' => $this->readVar('var_gas_dhw_year'),
                 'prevDay' => $this->prevPeriod('gasDhw', 'day'), 'prevWeek' => $this->prevPeriod('gasDhw', 'week'),
-                'prevMonth' => $this->prevPeriod('gasDhw', 'month'),
+                'prevMonth' => $this->prevPeriod('gasDhw', 'month'), 'prevYear' => $this->prevPeriod('gasDhw', 'year'),
             ],
             'gasTotal' => [
                 'day' => $this->readVar('var_gas_total_day'), 'week' => $this->readVar('var_gas_total_week'),
                 'month' => $this->readVar('var_gas_total_month'), 'year' => $this->readVar('var_gas_total_year'),
                 'prevDay' => $this->prevPeriod('gasTotal', 'day'), 'prevWeek' => $this->prevPeriod('gasTotal', 'week'),
-                'prevMonth' => $this->prevPeriod('gasTotal', 'month'),
+                'prevMonth' => $this->prevPeriod('gasTotal', 'month'), 'prevYear' => $this->prevPeriod('gasTotal', 'year'),
             ],
             'powerTotal' => [
                 'day' => $this->readVar('var_power_total_day'), 'week' => $this->readVar('var_power_total_week'),
                 'month' => $this->readVar('var_power_total_month'), 'year' => $this->readVar('var_power_total_year'),
                 'prevDay' => $this->prevPeriod('powerTotal', 'day'), 'prevWeek' => $this->prevPeriod('powerTotal', 'week'),
-                'prevMonth' => $this->prevPeriod('powerTotal', 'month'),
+                'prevMonth' => $this->prevPeriod('powerTotal', 'month'), 'prevYear' => $this->prevPeriod('powerTotal', 'year'),
             ],
 
             'histOutside' => $this->historySeries('outside'),
@@ -464,11 +467,13 @@ class HeatingDashboard extends IPSModule
                 . "<div class='bar-xlabel'>{$xlabel}</div></div>";
         }
 
-        $yearStr = $year !== null ? $this->fmtNum($year) . ' ' . $unit : '–';
-        $labelEsc = htmlspecialchars($label, ENT_QUOTES);
+        $prevYear    = $vals['prevYear'] ?? null;
+        $prevYearStr = $prevYear !== null ? ' (' . $this->fmtNum((float) $prevYear) . ' ' . $unit . ')' : '';
+        $yearStr     = $year !== null ? $this->fmtNum($year) . ' ' . $unit : '–';
+        $labelEsc    = htmlspecialchars($label, ENT_QUOTES);
         return "<div class=\"chart-card\"><div class=\"chart-card-label\">{$labelEsc}</div>"
             . "<div class=\"bar-row\">{$bars}</div>"
-            . "<div class=\"chart-card-year\">Jahr: {$yearStr}</div></div>";
+            . "<div class=\"chart-card-year\">Jahr: {$yearStr}{$prevYearStr}</div></div>";
     }
 
     private function buildDashboardHTML(): string
