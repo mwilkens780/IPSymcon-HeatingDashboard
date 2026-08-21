@@ -46,15 +46,10 @@ class HeatingDashboard extends IPSModule
         $this->RegisterPropertyInteger('var_hk1_normal_temp',  27514);
         $this->RegisterPropertyInteger('var_hk1_reduced_temp', 45743);
         $this->RegisterPropertyInteger('var_hk1_mode',         59120);
-        // VitoConnect exposes each circuit's own "name" (ident *_name, e.g. the
-        // name configured in the Viessmann app such as "Erdgeschoss") as a
-        // separate string variable. Optional: falls back to "Heizkreis 1/2".
-        $this->RegisterPropertyInteger('var_hk1_name', 0);
 
         $this->RegisterPropertyInteger('var_hk2_normal_temp',  31544);
         $this->RegisterPropertyInteger('var_hk2_reduced_temp', 27674);
         $this->RegisterPropertyInteger('var_hk2_mode',         29671);
-        $this->RegisterPropertyInteger('var_hk2_name', 0);
 
         $this->RegisterPropertyInteger('var_dhw_target_temp', 42574);
 
@@ -198,6 +193,37 @@ class HeatingDashboard extends IPSModule
             return null;
         }
         return GetValue($id);
+    }
+
+    /**
+     * VitoConnect creates a sibling string variable "Heizkreis N (Name)"
+     * (ident heating_circuits_{N}_name) next to every circuit's own data —
+     * the name the user set in the Viessmann app. We don't ask for a separate
+     * config property for it: we take whichever circuit N the already-
+     * configured mode variable belongs to (its ident is
+     * heating_circuits_{N}_operating_modes_active) and look up that sibling
+     * directly under the same VitoConnect instance.
+     */
+    private function circuitName(string $modeProp): ?string
+    {
+        $modeId = $this->ReadPropertyInteger($modeProp);
+        if ($modeId <= 0 || !@IPS_VariableExists($modeId)) {
+            return null;
+        }
+        $ident = @IPS_GetObject($modeId)['ObjectIdent'] ?? '';
+        if (!preg_match('/^(heating_circuits_\d+)_/', $ident, $m)) {
+            return null;
+        }
+        $parentId = @IPS_GetParent($modeId);
+        if ($parentId <= 0) {
+            return null;
+        }
+        $nameId = @IPS_GetObjectIDByIdent($m[1] . '_name', $parentId);
+        if (!$nameId || !@IPS_VariableExists($nameId)) {
+            return null;
+        }
+        $val = GetValue($nameId);
+        return is_string($val) && $val !== '' ? $val : null;
     }
 
     private function fmtNum($v, int $decimals = 0): string
@@ -358,11 +384,11 @@ class HeatingDashboard extends IPSModule
             'hk1_normal'  => $this->readVar('var_hk1_normal_temp'),
             'hk1_reduced' => $this->readVar('var_hk1_reduced_temp'),
             'hk1_mode'    => $this->readVar('var_hk1_mode'),
-            'hk1_name'    => $this->readVar('var_hk1_name'),
+            'hk1_name'    => $this->circuitName('var_hk1_mode'),
             'hk2_normal'  => $this->readVar('var_hk2_normal_temp'),
             'hk2_reduced' => $this->readVar('var_hk2_reduced_temp'),
             'hk2_mode'    => $this->readVar('var_hk2_mode'),
-            'hk2_name'    => $this->readVar('var_hk2_name'),
+            'hk2_name'    => $this->circuitName('var_hk2_mode'),
             'dhw_target'  => $this->readVar('var_dhw_target_temp'),
 
             'gasHeating' => [
