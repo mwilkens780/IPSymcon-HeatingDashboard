@@ -42,6 +42,12 @@ class HeatingDashboard extends IPSModule
         $this->RegisterPropertyInteger('var_hk2_supply',    20540);
         $this->RegisterPropertyInteger('var_burner_active', 26460);
         $this->RegisterPropertyInteger('var_burner_hours',  26950);
+        // Boiler-level status flags, same class of data as burner_active above
+        // (single global value, not reachable from any other configured
+        // variable's ident/parent) — need their own reference, unlike the
+        // per-circuit name/curve data below which is derived, not configured.
+        $this->RegisterPropertyInteger('var_primary_pump',     0);
+        $this->RegisterPropertyInteger('var_circulation_pump', 0);
 
         $this->RegisterPropertyInteger('var_hk1_normal_temp',  27514);
         $this->RegisterPropertyInteger('var_hk1_reduced_temp', 45743);
@@ -196,15 +202,15 @@ class HeatingDashboard extends IPSModule
     }
 
     /**
-     * VitoConnect creates a sibling string variable "Heizkreis N (Name)"
-     * (ident heating_circuits_{N}_name) next to every circuit's own data —
-     * the name the user set in the Viessmann app. We don't ask for a separate
-     * config property for it: we take whichever circuit N the already-
-     * configured mode variable belongs to (its ident is
-     * heating_circuits_{N}_operating_modes_active) and look up that sibling
-     * directly under the same VitoConnect instance.
+     * VitoConnect creates several sibling variables next to each circuit's own
+     * data, all sharing the ident prefix heating_circuits_{N}_ — the name
+     * ("Heizkreis N (Name)"), the Heizkennlinie ("Niveau"/"Neigung"), etc. We
+     * don't ask for separate config properties for these: we take whichever
+     * circuit N the already-configured mode variable belongs to (its own
+     * ident is heating_circuits_{N}_operating_modes_active) and resolve
+     * siblings directly under the same VitoConnect instance from there.
      */
-    private function circuitName(string $modeProp): ?string
+    private function circuitContext(string $modeProp): ?array
     {
         $modeId = $this->ReadPropertyInteger($modeProp);
         if ($modeId <= 0 || !@IPS_VariableExists($modeId)) {
@@ -218,12 +224,42 @@ class HeatingDashboard extends IPSModule
         if ($parentId <= 0) {
             return null;
         }
-        $nameId = @IPS_GetObjectIDByIdent($m[1] . '_name', $parentId);
-        if (!$nameId || !@IPS_VariableExists($nameId)) {
+        return ['prefix' => $m[1], 'parentId' => $parentId];
+    }
+
+    /** Resolves a sibling variable's value by ident suffix within a circuitContext(). */
+    private function circuitSibling(array $ctx, string $identSuffix)
+    {
+        $id = @IPS_GetObjectIDByIdent($ctx['prefix'] . $identSuffix, $ctx['parentId']);
+        if (!$id || !@IPS_VariableExists($id)) {
             return null;
         }
-        $val = GetValue($nameId);
+        return GetValue($id);
+    }
+
+    private function circuitName(string $modeProp): ?string
+    {
+        $ctx = $this->circuitContext($modeProp);
+        if ($ctx === null) {
+            return null;
+        }
+        $val = $this->circuitSibling($ctx, '_name');
         return is_string($val) && $val !== '' ? $val : null;
+    }
+
+    /** Heizkennlinie: Niveau (shift) und Neigung (slope), sibling idents heating_circuits_{N}_heating_curve_{shift|slope}. */
+    private function circuitCurve(string $modeProp): array
+    {
+        $ctx = $this->circuitContext($modeProp);
+        if ($ctx === null) {
+            return ['shift' => null, 'slope' => null];
+        }
+        $shift = $this->circuitSibling($ctx, '_heating_curve_shift');
+        $slope = $this->circuitSibling($ctx, '_heating_curve_slope');
+        return [
+            'shift' => $shift !== null ? (float) $shift : null,
+            'slope' => $slope !== null ? (float) $slope : null,
+        ];
     }
 
     private function fmtNum($v, int $decimals = 0): string
@@ -368,10 +404,14 @@ class HeatingDashboard extends IPSModule
 
     private function collectData(): array
     {
-        $outside = $this->readVar('var_outside_temp');
-        $dhw     = $this->readVar('var_dhw_temp');
-        $hk1Sup  = $this->readVar('var_hk1_supply');
-        $hk2Sup  = $this->readVar('var_hk2_supply');
+        $outside   = $this->readVar('var_outside_temp');
+        $dhw       = $this->readVar('var_dhw_temp');
+        $hk1Sup    = $this->readVar('var_hk1_supply');
+        $hk2Sup    = $this->readVar('var_hk2_supply');
+        $primPump  = $this->readVar('var_primary_pump');
+        $circPump  = $this->readVar('var_circulation_pump');
+        $hk1Curve  = $this->circuitCurve('var_hk1_mode');
+        $hk2Curve  = $this->circuitCurve('var_hk2_mode');
 
         return [
             'outsideTemp'   => $outside !== null ? (float) $outside : null,
@@ -380,15 +420,21 @@ class HeatingDashboard extends IPSModule
             'hk2Supply'     => $hk2Sup !== null ? (float) $hk2Sup : null,
             'burnerActive'  => (bool) $this->readVar('var_burner_active'),
             'burnerHours'   => $this->readVar('var_burner_hours'),
+            'primaryPumpActive'     => $primPump !== null ? (bool) $primPump : null,
+            'circulationPumpActive' => $circPump !== null ? (bool) $circPump : null,
 
             'hk1_normal'  => $this->readVar('var_hk1_normal_temp'),
             'hk1_reduced' => $this->readVar('var_hk1_reduced_temp'),
             'hk1_mode'    => $this->readVar('var_hk1_mode'),
             'hk1_name'    => $this->circuitName('var_hk1_mode'),
+            'hk1_shift'   => $hk1Curve['shift'],
+            'hk1_slope'   => $hk1Curve['slope'],
             'hk2_normal'  => $this->readVar('var_hk2_normal_temp'),
             'hk2_reduced' => $this->readVar('var_hk2_reduced_temp'),
             'hk2_mode'    => $this->readVar('var_hk2_mode'),
             'hk2_name'    => $this->circuitName('var_hk2_mode'),
+            'hk2_shift'   => $hk2Curve['shift'],
+            'hk2_slope'   => $hk2Curve['slope'],
             'dhw_target'  => $this->readVar('var_dhw_target_temp'),
 
             'gasHeating' => [
@@ -430,6 +476,24 @@ class HeatingDashboard extends IPSModule
     private function renderStatTile(string $id, string $label, string $value): string
     {
         return "<div class='cur-tile'><span class='cur-label'>{$label}</span><span id=\"{$id}\" class='cur-value'>{$value}</span></div>";
+    }
+
+    /** Renders nothing if $active is null (variable not configured) instead of a permanently-wrong "aus" badge. */
+    private function renderStatusBadge(string $id, string $label, ?bool $active): string
+    {
+        if ($active === null) {
+            return '';
+        }
+        $cls  = $active ? 'badge-on' : 'badge-off';
+        $text = htmlspecialchars($label . ($active ? ': an' : ': aus'), ENT_QUOTES);
+        return "<span id=\"{$id}\" class=\"badge {$cls}\">{$text}</span>";
+    }
+
+    private function renderCurveInfo(string $id, ?float $shift, ?float $slope): string
+    {
+        $shiftStr = $shift !== null ? $this->fmtNum($shift, 1) : '–';
+        $slopeStr = $slope !== null ? $this->fmtNum($slope, 1) : '–';
+        return "<div id=\"{$id}\" class=\"curve-info\">Heizkennlinie: Niveau {$shiftStr} · Neigung {$slopeStr}</div>";
     }
 
     private function renderMiniChart(string $id, string $label, array $series): string
@@ -525,6 +589,12 @@ class HeatingDashboard extends IPSModule
         $hk1Title = htmlspecialchars(is_string($d['hk1_name']) && $d['hk1_name'] !== '' ? $d['hk1_name'] : 'Heizkreis 1', ENT_QUOTES);
         $hk2Title = htmlspecialchars(is_string($d['hk2_name']) && $d['hk2_name'] !== '' ? $d['hk2_name'] : 'Heizkreis 2', ENT_QUOTES);
 
+        $primPumpBadge = $this->renderStatusBadge('primpump_badge', '💧 Primärpumpe', $d['primaryPumpActive']);
+        $circPumpBadge = $this->renderStatusBadge('circpump_badge', '🔄 Zirkulationspumpe', $d['circulationPumpActive']);
+
+        $hk1CurveInfo = $this->renderCurveInfo('hk1_curve', $d['hk1_shift'], $d['hk1_slope']);
+        $hk2CurveInfo = $this->renderCurveInfo('hk2_curve', $d['hk2_shift'], $d['hk2_slope']);
+
         $statTiles = $this->renderStatTile('cur_outside', 'Außen', $outsideStr)
             . $this->renderStatTile('cur_dhw', 'Warmwasser', $dhwStr)
             . $this->renderStatTile('cur_hk1', 'HK1 Vorlauf', $hk1Str)
@@ -567,6 +637,8 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 .badge{padding:3px 8px;border-radius:12px;font-size:12px;border:1px solid transparent;white-space:nowrap}
 .badge-off{background:#1a2535;border-color:#2a3a50;color:#4a6a8a}
 .badge-warn{background:#4a2010;border-color:#8a4020;color:#f08060}
+.badge-on{background:#12405a;border-color:#2a7aa0;color:#7ec8f0}
+.status-row{display:flex;gap:6px;flex-wrap:wrap;flex:none}
 .section-label{font-size:11px;font-weight:700;color:#8aa8c8;text-transform:uppercase;letter-spacing:.04em;flex:none;border-bottom:1px solid #1e3a5f;padding-bottom:3px}
 .current-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;flex:none}
 .cur-tile{display:flex;flex-direction:column;gap:1px;background:#131f33;border-radius:8px;padding:6px 8px}
@@ -582,6 +654,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 .chart-min{bottom:2px}
 .hk-block{display:flex;flex-direction:column;gap:6px;flex:none;background:#0f1c30;border-radius:10px;padding:8px}
 .hk-title{font-size:12px;font-weight:700;color:#d0e8ff}
+.curve-info{font-size:10px;color:#8aa8c8;text-align:center}
 .mode-row{display:flex;gap:4px;flex-wrap:wrap}
 .mode-btn{flex:1;min-width:60px;background:#1a2535;border:1px solid #2a3a50;color:#8aa8c8;border-radius:6px;font-size:10px;padding:5px 2px;cursor:pointer}
 .mode-btn.mode-active{background:#1e4a6e;border-color:#3a8abf;color:#7ec8f0;font-weight:700}
@@ -592,7 +665,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 .dial-label{font-size:10px;color:#8aa8c8;margin-top:30px}
 .chart-card{background:#131f33;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;gap:4px}
 .chart-card-label{font-size:11px;font-weight:700;color:#8aa8c8}
-.bar-row{display:flex;justify-content:space-around;align-items:flex-end;height:80px}
+.bar-row{display:flex;justify-content:space-around;align-items:flex-end}
 .bar-col{display:flex;flex-direction:column;align-items:center;gap:2px}
 .bar-value{font-size:10px;font-weight:700;color:#d0e8ff}
 .bar-prev{font-size:8px;font-weight:400;color:#4a6a8a;min-height:10px}
@@ -609,10 +682,13 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
   <span id="burner_badge" class="badge {$burnerCls}">{$burnerText}</span>
 </div>
 
+<div class="status-row">{$primPumpBadge}{$circPumpBadge}</div>
+
 <div class="hk-block">
   <div id="hk1_title" class="hk-title">{$hk1Title}</div>
   {$hk1Modes}
   <div class="dial-row">{$hk1Dials}</div>
+  {$hk1CurveInfo}
 </div>
 
 <div class="current-grid">{$statTiles}</div>
@@ -623,6 +699,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
   <div id="hk2_title" class="hk-title">{$hk2Title}</div>
   {$hk2Modes}
   <div class="dial-row">{$hk2Dials}</div>
+  {$hk2CurveInfo}
 </div>
 
 <div class="hk-block">
@@ -765,8 +842,23 @@ window.handleMessage = function(raw) {
       badge.textContent = val.burnerActive ? '🔥 Brenner an' : '🔥 Brenner aus';
     }
 
+    var primBadge = document.getElementById('primpump_badge');
+    if (primBadge && val.primaryPumpActive != null) {
+      primBadge.className = 'badge ' + (val.primaryPumpActive ? 'badge-on' : 'badge-off');
+      primBadge.textContent = '💧 Primärpumpe: ' + (val.primaryPumpActive ? 'an' : 'aus');
+    }
+    var circBadge = document.getElementById('circpump_badge');
+    if (circBadge && val.circulationPumpActive != null) {
+      circBadge.className = 'badge ' + (val.circulationPumpActive ? 'badge-on' : 'badge-off');
+      circBadge.textContent = '🔄 Zirkulationspumpe: ' + (val.circulationPumpActive ? 'an' : 'aus');
+    }
+
     setText('hk1_title', val.hk1_name ? val.hk1_name : 'Heizkreis 1');
     setText('hk2_title', val.hk2_name ? val.hk2_name : 'Heizkreis 2');
+
+    function fmt1(v) { return v == null ? '–' : v.toFixed(1).replace('.', ','); }
+    setText('hk1_curve', 'Heizkennlinie: Niveau ' + fmt1(val.hk1_shift) + ' · Neigung ' + fmt1(val.hk1_slope));
+    setText('hk2_curve', 'Heizkennlinie: Niveau ' + fmt1(val.hk2_shift) + ' · Neigung ' + fmt1(val.hk2_slope));
 
     renderMiniChart('chart_outside', val.histOutside);
     renderMiniChart('chart_hk1', val.histHk1);

@@ -21,7 +21,9 @@
         { "type": "SelectVariable", "name": "var_hk1_supply",    "caption": "Heizkreis 1 Vorlauftemperatur" },
         { "type": "SelectVariable", "name": "var_hk2_supply",    "caption": "Heizkreis 2 Vorlauftemperatur" },
         { "type": "SelectVariable", "name": "var_burner_active", "caption": "Brenner aktiv" },
-        { "type": "SelectVariable", "name": "var_burner_hours",  "caption": "Brenner-Laufzeit gesamt (h)" }
+        { "type": "SelectVariable", "name": "var_burner_hours",  "caption": "Brenner-Laufzeit gesamt (h)" },
+        { "type": "SelectVariable", "name": "var_primary_pump",     "caption": "Primärpumpe (Status, optional)" },
+        { "type": "SelectVariable", "name": "var_circulation_pump", "caption": "Zirkulationspumpe (Status, optional)" }
       ]
     },
     {
