@@ -46,10 +46,15 @@ class HeatingDashboard extends IPSModule
         $this->RegisterPropertyInteger('var_hk1_normal_temp',  27514);
         $this->RegisterPropertyInteger('var_hk1_reduced_temp', 45743);
         $this->RegisterPropertyInteger('var_hk1_mode',         59120);
+        // VitoConnect exposes each circuit's own "name" (ident *_name, e.g. the
+        // name configured in the Viessmann app such as "Erdgeschoss") as a
+        // separate string variable. Optional: falls back to "Heizkreis 1/2".
+        $this->RegisterPropertyInteger('var_hk1_name', 0);
 
         $this->RegisterPropertyInteger('var_hk2_normal_temp',  31544);
         $this->RegisterPropertyInteger('var_hk2_reduced_temp', 27674);
         $this->RegisterPropertyInteger('var_hk2_mode',         29671);
+        $this->RegisterPropertyInteger('var_hk2_name', 0);
 
         $this->RegisterPropertyInteger('var_dhw_target_temp', 42574);
 
@@ -353,9 +358,11 @@ class HeatingDashboard extends IPSModule
             'hk1_normal'  => $this->readVar('var_hk1_normal_temp'),
             'hk1_reduced' => $this->readVar('var_hk1_reduced_temp'),
             'hk1_mode'    => $this->readVar('var_hk1_mode'),
+            'hk1_name'    => $this->readVar('var_hk1_name'),
             'hk2_normal'  => $this->readVar('var_hk2_normal_temp'),
             'hk2_reduced' => $this->readVar('var_hk2_reduced_temp'),
             'hk2_mode'    => $this->readVar('var_hk2_mode'),
+            'hk2_name'    => $this->readVar('var_hk2_name'),
             'dhw_target'  => $this->readVar('var_dhw_target_temp'),
 
             'gasHeating' => [
@@ -489,6 +496,9 @@ class HeatingDashboard extends IPSModule
         $burnerCls  = $d['burnerActive'] ? 'badge-warn' : 'badge-off';
         $burnerText = $d['burnerActive'] ? '🔥 Brenner an' : '🔥 Brenner aus';
 
+        $hk1Title = htmlspecialchars(is_string($d['hk1_name']) && $d['hk1_name'] !== '' ? $d['hk1_name'] : 'Heizkreis 1', ENT_QUOTES);
+        $hk2Title = htmlspecialchars(is_string($d['hk2_name']) && $d['hk2_name'] !== '' ? $d['hk2_name'] : 'Heizkreis 2', ENT_QUOTES);
+
         $statTiles = $this->renderStatTile('cur_outside', 'Außen', $outsideStr)
             . $this->renderStatTile('cur_dhw', 'Warmwasser', $dhwStr)
             . $this->renderStatTile('cur_hk1', 'HK1 Vorlauf', $hk1Str)
@@ -574,7 +584,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 </div>
 
 <div class="hk-block">
-  <div class="hk-title">Heizkreis 1</div>
+  <div id="hk1_title" class="hk-title">{$hk1Title}</div>
   {$hk1Modes}
   <div class="dial-row">{$hk1Dials}</div>
 </div>
@@ -584,7 +594,7 @@ body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemF
 <div class="charts-grid">{$charts}</div>
 
 <div class="hk-block">
-  <div class="hk-title">Heizkreis 2</div>
+  <div id="hk2_title" class="hk-title">{$hk2Title}</div>
   {$hk2Modes}
   <div class="dial-row">{$hk2Dials}</div>
 </div>
@@ -728,6 +738,9 @@ window.handleMessage = function(raw) {
       badge.className = 'badge ' + (val.burnerActive ? 'badge-warn' : 'badge-off');
       badge.textContent = val.burnerActive ? '🔥 Brenner an' : '🔥 Brenner aus';
     }
+
+    setText('hk1_title', val.hk1_name ? val.hk1_name : 'Heizkreis 1');
+    setText('hk2_title', val.hk2_name ? val.hk2_name : 'Heizkreis 2');
 
     renderMiniChart('chart_outside', val.histOutside);
     renderMiniChart('chart_hk1', val.histHk1);

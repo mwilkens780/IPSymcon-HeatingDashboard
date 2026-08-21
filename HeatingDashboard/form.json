@@ -29,6 +29,7 @@
       "caption": "Sollwerte Heizkreis 1",
       "expanded": true,
       "items": [
+        { "type": "SelectVariable", "name": "var_hk1_name",         "caption": "Name (optional, z.B. \"Erdgeschoss\" – sonst \"Heizkreis 1\")" },
         { "type": "SelectVariable", "name": "var_hk1_normal_temp",  "caption": "Normal (Soll)",    "requiredAction": 1 },
         { "type": "SelectVariable", "name": "var_hk1_reduced_temp", "caption": "Reduziert (Soll)", "requiredAction": 1 },
         { "type": "SelectVariable", "name": "var_hk1_mode",         "caption": "Betriebsart",      "requiredAction": 1 }
@@ -39,6 +40,7 @@
       "caption": "Sollwerte Heizkreis 2",
       "expanded": true,
       "items": [
+        { "type": "SelectVariable", "name": "var_hk2_name",         "caption": "Name (optional, z.B. \"Obergeschoss\" – sonst \"Heizkreis 2\")" },
         { "type": "SelectVariable", "name": "var_hk2_normal_temp",  "caption": "Normal (Soll)",    "requiredAction": 1 },
         { "type": "SelectVariable", "name": "var_hk2_reduced_temp", "caption": "Reduziert (Soll)", "requiredAction": 1 },
         { "type": "SelectVariable", "name": "var_hk2_mode",         "caption": "Betriebsart",      "requiredAction": 1 }
