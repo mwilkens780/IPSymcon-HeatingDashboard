@@ -3,8 +3,8 @@
     "author": "Martin Wilkens",
     "name": "Heating Dashboard",
     "description": "Grafisches Heizungs-Dashboard fuer IP-Symcon: VitoConnect-Kennzahlen, Temperaturverlaeufe, Verbrauchs-Balkendiagramme und interaktive Soll-Temperatur-Regler/Modus-Schalter in einer HTML-SDK-Kachel.",
-    "version": "1.6",
-    "build": 7,
-    "date": 1787317282,
+    "version": "1.7",
+    "build": 8,
+    "date": 1795615180,
     "url": "https://github.com/mwilkens780/IPSymcon-HeatingDashboard"
 }

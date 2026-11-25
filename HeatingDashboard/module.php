@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../libs/TileKit.php';
+
 class HeatingDashboard extends IPSModule
 {
+    use \Fuchsbau\TileKit\HeatingDashboard\TileKit;
+
     // VitoConnect's own VVC.Mode enum (see de.paresy.viessmann module) — hardcoded
     // here since we don't call the Viessmann API ourselves, just read/write the
     // existing VitoConnect-owned variables.
@@ -132,8 +136,7 @@ class HeatingDashboard extends IPSModule
         try {
             $this->sampleHistory();
             $this->trackPeriods();
-            $data = $this->collectData();
-            $this->pushValue('__all__', $data);
+            $this->tkPush('__all__', $this->ops($this->view($this->collectData())));
             $this->SetStatus(102);
         } catch (\Throwable $e) {
             $this->LogMessage('HeatingDashboard Refresh: ' . $e->getMessage(), KL_ERROR);
@@ -169,13 +172,13 @@ class HeatingDashboard extends IPSModule
                 $targetID = $this->ReadPropertyInteger($dialTargets[$Ident]);
                 if ($targetID > 0) {
                     RequestAction($targetID, (float) $Value);
-                    $this->pushValue($Ident, (float) $Value); // optimistic UI update
+                    $this->tkPush($Ident, (float) $Value); // optimistic UI update
                 }
             } elseif (isset($modeTargets[$Ident])) {
                 $targetID = $this->ReadPropertyInteger($modeTargets[$Ident]);
                 if ($targetID > 0) {
                     RequestAction($targetID, (string) $Value);
-                    $this->pushValue($Ident, (string) $Value);
+                    $this->tkPush($Ident, (string) $Value);
                 }
             } else {
                 $this->LogMessage("HeatingDashboard RequestAction: unknown ident {$Ident}", KL_WARNING);
@@ -186,11 +189,6 @@ class HeatingDashboard extends IPSModule
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
-
-    private function pushValue(string $key, $value): void
-    {
-        $this->UpdateVisualizationValue(json_encode(['key' => $key, 'value' => $value]));
-    }
 
     private function readVar(string $prop)
     {
@@ -471,429 +469,230 @@ class HeatingDashboard extends IPSModule
         ];
     }
 
-    // ─── Rendering ──────────────────────────────────────────────────────────────
+    // ─── Rendering (TileKit, siehe docs/ui-kachel.md im Workspace) ─────────────
+    //
+    // view() → Erstrender und Live-Push (ops) aus derselben Quelle; Diagramme
+    // werden nur noch in PHP gerendert (frueher doppelt in PHP und JS).
 
-    private function renderStatTile(string $id, string $label, string $value): string
+    private function deg($v): string
     {
-        return "<div class='cur-tile'><span class='cur-label'>{$label}</span><span id=\"{$id}\" class='cur-value'>{$value}</span></div>";
+        return $v === null ? '–' : $this->fmtNum((float) $v, 1) . ' °C';
     }
 
-    /** Renders nothing if $active is null (variable not configured) instead of a permanently-wrong "aus" badge. */
-    private function renderStatusBadge(string $id, string $label, ?bool $active): string
+    private function view(array $d): array
     {
-        if ($active === null) {
-            return '';
+        $onOff = static fn (?bool $on, string $onIcon, string $offIcon, string $onState = 'ok') => $on === null ? null
+            : ['text' => $on ? 'An' : 'Aus', 'icon' => $on ? $onIcon : $offIcon, 'state' => $on ? $onState : ''];
+        $circuit = function (string $k) use ($d): array {
+            $name = is_string($d[$k . '_name']) && $d[$k . '_name'] !== '' ? $d[$k . '_name'] : 'Heizkreis ' . substr($k, 2);
+            return ['name' => $name, 'mode' => $d[$k . '_mode'] !== null ? (string) $d[$k . '_mode'] : null,
+                'normal' => $d[$k . '_normal'] !== null ? (float) $d[$k . '_normal'] : null,
+                'reduced' => $d[$k . '_reduced'] !== null ? (float) $d[$k . '_reduced'] : null,
+                'shift' => $d[$k . '_shift'] !== null ? $this->fmtNum($d[$k . '_shift'], 1) : '–',
+                'slope' => $d[$k . '_slope'] !== null ? $this->fmtNum($d[$k . '_slope'], 1) : '–'];
+        };
+        return [
+            'updated' => $d['updated'],
+            'burner'  => ['text' => $d['burnerActive'] ? 'Brennt' : 'Aus', 'icon' => $d['burnerActive'] ? '🔥' : '💤', 'state' => $d['burnerActive'] ? 'warn' : ''],
+            'primPump' => $onOff($d['primaryPumpActive'], '💧', '⏸'),
+            'circPump' => $onOff($d['circulationPumpActive'], '🔄', '⏸'),
+            'hours'   => $d['burnerHours'] !== null ? $this->fmtNum($d['burnerHours']) . ' h' : '–',
+            'temps'   => [
+                'outside' => ['Außen', $this->deg($d['outsideTemp']), $this->chartHtml($d['histOutside'])],
+                'dhw'     => ['Warmwasser', $this->deg($d['dhwTemp']), $this->chartHtml($d['histDhw'])],
+                'hk1'     => ['Vorlauf HK1', $this->deg($d['hk1Supply']), $this->chartHtml($d['histHk1'])],
+                'hk2'     => ['Vorlauf HK2', $this->deg($d['hk2Supply']), $this->chartHtml($d['histHk2'])],
+            ],
+            'hk1'     => $circuit('hk1'),
+            'hk2'     => $circuit('hk2'),
+            'dhwTarget' => $d['dhw_target'] !== null ? (float) $d['dhw_target'] : null,
+            'usage'   => [
+                'gasHeating' => ['Gas Heizung', $this->barsHtml($d['gasHeating'], 'm³')],
+                'gasDhw'     => ['Gas Warmwasser', $this->barsHtml($d['gasDhw'], 'm³')],
+                'gasTotal'   => ['Gas gesamt', $this->barsHtml($d['gasTotal'], 'm³')],
+                'powerTotal' => ['Strom gesamt', $this->barsHtml($d['powerTotal'], 'kWh')],
+            ],
+        ];
+    }
+
+    private function ops(array $v): array
+    {
+        $ops = [];
+        foreach (['burner', 'primPump', 'circPump'] as $k) {
+            if ($v[$k] !== null) {
+                array_push($ops, ['t', $k . '_val', $v[$k]['text']], ['t', $k . '_icon', $v[$k]['icon']], ['s', $k, $v[$k]['state']]);
+            }
         }
-        $cls  = $active ? 'badge-on' : 'badge-off';
-        $text = htmlspecialchars($label . ($active ? ': an' : ': aus'), ENT_QUOTES);
-        return "<span id=\"{$id}\" class=\"badge {$cls}\">{$text}</span>";
-    }
-
-    /** Niveau/Neigung stacked vertically, meant to sit next to the dial-row for the same circuit. */
-    private function renderCurveInfo(string $idPrefix, ?float $shift, ?float $slope): string
-    {
-        $shiftStr = $shift !== null ? $this->fmtNum($shift, 1) : '–';
-        $slopeStr = $slope !== null ? $this->fmtNum($slope, 1) : '–';
-        return '<div class="curve-col">'
-            . "<div class=\"curve-item\"><span class=\"curve-label\">Niveau</span><span id=\"{$idPrefix}_shift\" class=\"curve-value\">{$shiftStr}</span></div>"
-            . "<div class=\"curve-item\"><span class=\"curve-label\">Neigung</span><span id=\"{$idPrefix}_slope\" class=\"curve-value\">{$slopeStr}</span></div>"
-            . '</div>';
-    }
-
-    private function renderMiniChart(string $id, string $label, array $series): string
-    {
-        $chart    = $this->chartData($series);
-        $maxStr   = $chart['max'] !== null ? $this->fmtNum($chart['max'], 1) . '°' : '';
-        $minStr   = $chart['min'] !== null ? $this->fmtNum($chart['min'], 1) . '°' : '';
-        return "<div class=\"chart-wrap\"><div class=\"chart-label\">{$label}</div>"
-            . '<div class="chart-inner">'
-            . "<svg id=\"{$id}_svg\" viewBox=\"0 0 300 60\" preserveAspectRatio=\"none\">"
-            . "<polyline id=\"{$id}_poly\" points=\"{$chart['points']}\" fill=\"none\" stroke=\"#7ec8f0\" stroke-width=\"2\"/>"
-            . '</svg>'
-            . "<span id=\"{$id}_max\" class=\"chart-max\">{$maxStr}</span>"
-            . "<span id=\"{$id}_min\" class=\"chart-min\">{$minStr}</span>"
-            . '</div></div>';
-    }
-
-    private function renderModeButtons(string $ident, ?string $current): string
-    {
-        $html = "<div class=\"mode-row\" data-ident=\"{$ident}\">";
-        foreach (self::MODE_LABELS as $val => $label) {
-            $activeCls = $current === $val ? ' mode-active' : '';
-            $valEsc    = htmlspecialchars($val, ENT_QUOTES);
-            $labelEsc  = htmlspecialchars($label, ENT_QUOTES);
-            $html .= "<button type=\"button\" class=\"mode-btn{$activeCls}\" data-value=\"{$valEsc}\" "
-                . "onclick=\"requestAction('{$ident}', '{$valEsc}')\">{$labelEsc}</button>";
+        $ops[] = ['t', 'hours_val', $v['hours']];
+        foreach ($v['temps'] as $k => [, $text, $chart]) {
+            array_push($ops, ['t', $k . '_val', $text], ['h', $k . '_chart', $chart]);
         }
-        return $html . '</div>';
+        foreach (['hk1', 'hk2'] as $k) {
+            $c = $v[$k];
+            array_push($ops, ['t', $k . '_title', $c['name']], ['t', $k . '_shift_val', $c['shift']], ['t', $k . '_slope_val', $c['slope']]);
+            if ($c['mode'] !== null) {
+                $ops[] = ['g', $k . '_mode', $c['mode']];
+            }
+            foreach (['normal', 'reduced'] as $dk) {
+                if ($c[$dk] !== null) {
+                    $ops[] = ['d', $k . '_' . $dk, $c[$dk]];
+                }
+            }
+        }
+        if ($v['dhwTarget'] !== null) {
+            $ops[] = ['d', 'dhw_target', $v['dhwTarget']];
+        }
+        foreach ($v['usage'] as $k => [, $html]) {
+            $ops[] = ['h', $k . '_bars', $html];
+        }
+        return ['updated' => $v['updated'], 'ops' => $ops];
     }
 
-    private function renderDial(string $ident, string $label, ?float $value): string
+    /** 6h-Verlauf aus dem eigenen Sample-Cache (VitoConnect archiviert nicht). */
+    private function chartHtml(array $series): string
+    {
+        $c = $this->chartData($series);
+        if ($c['points'] === '') {
+            return '<span class="tk-hint">Verlauf baut sich auf</span>';
+        }
+        return "<svg viewBox=\"0 0 300 60\" preserveAspectRatio=\"none\"><polyline points=\"{$c['points']}\" fill=\"none\" stroke=\"#7ec8f0\" stroke-width=\"2\" vector-effect=\"non-scaling-stroke\"/></svg>"
+            . '<span class="ch-max">' . $this->fmtNum($c['max'], 1) . '°</span><span class="ch-min">' . $this->fmtNum($c['min'], 1) . '°</span>';
+    }
+
+    /** Tag/Woche/Monat als Balken (Vorperiode in Klammern), darunter das Jahr. */
+    private function barsHtml(array $vals, string $unit): string
+    {
+        $f    = fn ($v) => $v === null ? '–' : $this->fmtNum((float) $v, (float) $v < 10 ? 1 : 0);
+        $nums = array_filter([$vals['day'], $vals['week'], $vals['month']], static fn ($v) => $v !== null);
+        $max  = count($nums) > 0 ? max(max(array_map('floatval', $nums)), 0.001) : 1.0;
+        $html = '<div class="bars">';
+        foreach (['Tag' => ['day', 'prevDay'], 'Woche' => ['week', 'prevWeek'], 'Monat' => ['month', 'prevMonth']] as $label => [$k, $pk]) {
+            $v     = $vals[$k];
+            $h     = $v !== null ? max(2, (int) round((float) $v / $max * 56)) : 2;
+            $prev  = ($vals[$pk] ?? null) !== null ? '(' . $f($vals[$pk]) . ')' : '';
+            $html .= '<div class="bar"><span class="bar-v">' . $f($v) . "</span><span class=\"tk-sub\">{$prev}</span>"
+                . "<div class=\"bar-track\"><div class=\"bar-fill\" style=\"height:{$h}px\"></div></div><span class=\"tk-sub\">{$label}</span></div>";
+        }
+        $prevYear = ($vals['prevYear'] ?? null) !== null ? ' (' . $this->fmtNum((float) $vals['prevYear']) . " {$unit})" : '';
+        $year     = $vals['year'] !== null ? $this->fmtNum((float) $vals['year']) . " {$unit}" : '–';
+        return $html . "</div><span class=\"tk-sub year\">Jahr: {$year}{$prevYear}</span>";
+    }
+
+    private function dial(string $ident, string $label, ?float $value): string
     {
         [$min, $max, $step] = self::DIAL_RANGES[$ident];
-        $val    = $value ?? $min;
+        $val       = $value ?? $min;
         [$tx, $ty] = $this->dialThumbPos($val, $min, $max);
-        $valStr = $value !== null ? $this->fmtNum($value, 1) . '°' : '–';
-        $labelEsc = htmlspecialchars($label, ENT_QUOTES);
-
+        $valStr    = $value !== null ? $this->fmtNum($value, 1) . '°' : '–';
         return "<div class=\"dial\" data-ident=\"{$ident}\" data-min=\"{$min}\" data-max=\"{$max}\" data-step=\"{$step}\" data-value=\"{$val}\">"
-            . '<svg class="dial-svg" viewBox="0 0 120 120">'
-            . '<path class="dial-track" d="M 28.2 91.8 A 45 45 0 1 1 91.8 91.8" fill="none" stroke="#1e2d40" stroke-width="8" stroke-linecap="round"/>'
-            . "<circle class=\"dial-thumb\" cx=\"{$tx}\" cy=\"{$ty}\" r=\"7\" fill=\"#7ec8f0\"/>"
-            . '</svg>'
-            . "<div class=\"dial-value\">{$valStr}</div>"
-            . "<div class=\"dial-label\">{$labelEsc}</div>"
-            . '</div>';
+            . '<svg class="dial-svg" viewBox="0 0 120 120"><path d="M 28.2 91.8 A 45 45 0 1 1 91.8 91.8" fill="none" stroke="#1e2d40" stroke-width="8" stroke-linecap="round"/>'
+            . "<circle class=\"dial-thumb\" cx=\"{$tx}\" cy=\"{$ty}\" r=\"7\" fill=\"#7ec8f0\"/></svg>"
+            . "<div class=\"dial-center\"><span class=\"dial-value\">{$valStr}</span><span class=\"tk-sub\">" . self::tkEsc($label) . '</span></div></div>';
     }
 
-    private function renderBarChart(string $label, string $unit, array $vals): string
+    private function circuitTiles(string $k, array $c): string
     {
-        $day = $vals['day'] !== null ? (float) $vals['day'] : null;
-        $week = $vals['week'] !== null ? (float) $vals['week'] : null;
-        $month = $vals['month'] !== null ? (float) $vals['month'] : null;
-        $year = $vals['year'] !== null ? (float) $vals['year'] : null;
-
-        $localMax = max(array_filter([$day, $week, $month], static fn ($v) => $v !== null)) ?: 1.0;
-
-        $prevMap = ['Tag' => $vals['prevDay'] ?? null, 'Woche' => $vals['prevWeek'] ?? null, 'Monat' => $vals['prevMonth'] ?? null];
-
-        $bars = '';
-        foreach (['Tag' => $day, 'Woche' => $week, 'Monat' => $month] as $xlabel => $v) {
-            $h       = $v !== null ? max(2, (int) round(($v / $localMax) * 60)) : 2;
-            $vStr    = $v !== null ? $this->fmtNum($v, $v < 10 ? 1 : 0) : '–';
-            $prevVal = $prevMap[$xlabel] !== null ? (float) $prevMap[$xlabel] : null;
-            $prevStr = $prevVal !== null ? '(' . $this->fmtNum($prevVal, $prevVal < 10 ? 1 : 0) . ')' : '';
-            $bars .= "<div class='bar-col'><div class='bar-value'>{$vStr}</div><div class='bar-prev'>{$prevStr}</div>"
-                . "<div class='bar-track'><div class='bar-fill-v' style='height:{$h}px'></div></div>"
-                . "<div class='bar-xlabel'>{$xlabel}</div></div>";
+        $modes = "<div class=\"tk-seg\" id=\"{$k}_mode_seg\">";
+        foreach (self::MODE_LABELS as $val => $label) {
+            $on     = $c['mode'] === $val ? ' class="tk-on"' : '';
+            $modes .= "<button type=\"button\"{$on} data-value=\"{$val}\" onclick=\"pick('{$k}_mode', this)\">" . self::tkEsc($label) . '</button>';
         }
-
-        $prevYear    = $vals['prevYear'] ?? null;
-        $prevYearStr = $prevYear !== null ? ' (' . $this->fmtNum((float) $prevYear) . ' ' . $unit . ')' : '';
-        $yearStr     = $year !== null ? $this->fmtNum($year) . ' ' . $unit : '–';
-        $labelEsc    = htmlspecialchars($label, ENT_QUOTES);
-        return "<div class=\"chart-card\"><div class=\"chart-card-label\">{$labelEsc}</div>"
-            . "<div class=\"bar-row\">{$bars}</div>"
-            . "<div class=\"chart-card-year\">Jahr: {$yearStr}{$prevYearStr}</div></div>";
+        $modes .= '</div>';
+        return "<div class=\"tk-group\" id=\"{$k}_title\">" . self::tkEsc($c['name']) . '</div>'
+            . "<div class=\"tk-tile tk-span2 hk\"><span class=\"tk-name\">Betriebsart</span>{$modes}</div>"
+            . '<div class="tk-tile tk-span2 dials">' . $this->dial($k . '_normal', 'Normal', $c['normal']) . $this->dial($k . '_reduced', 'Reduziert', $c['reduced']) . '</div>'
+            . self::tkValueTile($k . '_shift', 'Heizkurve Niveau', $c['shift'])
+            . self::tkValueTile($k . '_slope', 'Heizkurve Neigung', $c['slope']);
     }
 
     private function buildDashboardHTML(): string
     {
-        $d = $this->collectData();
+        $v    = $this->view($this->collectData());
+        $body = self::tkGroup('Kessel')
+            . self::tkStatusTile('burner', 'Brenner', $v['burner']['text'], $v['burner']['icon'], $v['burner']['state'])
+            . ($v['primPump'] !== null ? self::tkStatusTile('primPump', 'Primärpumpe', $v['primPump']['text'], $v['primPump']['icon'], $v['primPump']['state']) : '')
+            . ($v['circPump'] !== null ? self::tkStatusTile('circPump', 'Zirkulationspumpe', $v['circPump']['text'], $v['circPump']['icon'], $v['circPump']['state']) : '')
+            . self::tkValueTile('hours', 'Brennerstunden', $v['hours'])
+            . self::tkGroup('Temperaturen (6 h)');
+        foreach ($v['temps'] as $k => [$name, $text, $chart]) {
+            $body .= "<div class=\"tk-tile tk-span2 chart-tile\" id=\"{$k}_card\"><span class=\"tk-name\">" . self::tkEsc($name) . '</span>'
+                . "<span id=\"{$k}_val\" class=\"tk-value\">" . self::tkEsc($text) . "</span><div class=\"chart\" id=\"{$k}_chart\">{$chart}</div></div>";
+        }
+        $body .= $this->circuitTiles('hk1', $v['hk1']) . $this->circuitTiles('hk2', $v['hk2'])
+            . self::tkGroup('Warmwasser')
+            . '<div class="tk-tile dials">' . $this->dial('dhw_target', 'Soll', $v['dhwTarget']) . '</div>'
+            . self::tkGroup('Verbrauch');
+        foreach ($v['usage'] as $k => [$name, $html]) {
+            $body .= '<div class="tk-tile tk-span2 bars-tile"><span class="tk-name">' . self::tkEsc($name) . "</span><div id=\"{$k}_bars\">{$html}</div></div>";
+        }
 
-        $outsideStr = $d['outsideTemp'] !== null ? $this->fmtNum($d['outsideTemp'], 1) . '°C' : '–';
-        $dhwStr     = $d['dhwTemp'] !== null ? $this->fmtNum($d['dhwTemp'], 1) . '°C' : '–';
-        $hk1Str     = $d['hk1Supply'] !== null ? $this->fmtNum($d['hk1Supply'], 1) . '°C' : '–';
-        $hk2Str     = $d['hk2Supply'] !== null ? $this->fmtNum($d['hk2Supply'], 1) . '°C' : '–';
-        $hoursStr   = $d['burnerHours'] !== null ? $this->fmtNum($d['burnerHours']) . ' h' : '–';
-
-        $burnerCls  = $d['burnerActive'] ? 'badge-warn' : 'badge-off';
-        $burnerText = $d['burnerActive'] ? '🔥 Brenner an' : '🔥 Brenner aus';
-
-        $hk1Title = htmlspecialchars(is_string($d['hk1_name']) && $d['hk1_name'] !== '' ? $d['hk1_name'] : 'Heizkreis 1', ENT_QUOTES);
-        $hk2Title = htmlspecialchars(is_string($d['hk2_name']) && $d['hk2_name'] !== '' ? $d['hk2_name'] : 'Heizkreis 2', ENT_QUOTES);
-
-        $primPumpBadge = $this->renderStatusBadge('primpump_badge', '💧 Primärpumpe', $d['primaryPumpActive']);
-        $circPumpBadge = $this->renderStatusBadge('circpump_badge', '🔄 Zirkulationspumpe', $d['circulationPumpActive']);
-
-        $hk1CurveInfo = $this->renderCurveInfo('hk1_curve', $d['hk1_shift'], $d['hk1_slope']);
-        $hk2CurveInfo = $this->renderCurveInfo('hk2_curve', $d['hk2_shift'], $d['hk2_slope']);
-
-        $statTiles = $this->renderStatTile('cur_outside', 'Außen', $outsideStr)
-            . $this->renderStatTile('cur_dhw', 'Warmwasser', $dhwStr)
-            . $this->renderStatTile('cur_hk1', 'HK1 Vorlauf', $hk1Str)
-            . $this->renderStatTile('cur_hk2', 'HK2 Vorlauf', $hk2Str)
-            . $this->renderStatTile('cur_hours', 'Brennerstunden', $hoursStr);
-
-        $charts = $this->renderMiniChart('chart_outside', 'Außentemperatur 6h', $this->historySeries('outside'))
-            . $this->renderMiniChart('chart_hk1', 'HK1 Vorlauf 6h', $this->historySeries('hk1'))
-            . $this->renderMiniChart('chart_hk2', 'HK2 Vorlauf 6h', $this->historySeries('hk2'))
-            . $this->renderMiniChart('chart_dhw', 'Warmwasser 6h', $this->historySeries('dhw'));
-
-        $hk1Modes = $this->renderModeButtons('hk1_mode', $d['hk1_mode']);
-        $hk2Modes = $this->renderModeButtons('hk2_mode', $d['hk2_mode']);
-
-        $hk1Dials = $this->renderDial('hk1_normal', 'HK1 Normal', $d['hk1_normal'] !== null ? (float) $d['hk1_normal'] : null)
-            . $this->renderDial('hk1_reduced', 'HK1 Reduziert', $d['hk1_reduced'] !== null ? (float) $d['hk1_reduced'] : null);
-        $hk2Dials = $this->renderDial('hk2_normal', 'HK2 Normal', $d['hk2_normal'] !== null ? (float) $d['hk2_normal'] : null)
-            . $this->renderDial('hk2_reduced', 'HK2 Reduziert', $d['hk2_reduced'] !== null ? (float) $d['hk2_reduced'] : null);
-        $dhwDial  = $this->renderDial('dhw_target', 'Warmwasser', $d['dhw_target'] !== null ? (float) $d['dhw_target'] : null);
-
-        $consumption = $this->renderBarChart('Gas Heizung', 'm³', $d['gasHeating'])
-            . $this->renderBarChart('Gas Warmwasser', 'm³', $d['gasDhw'])
-            . $this->renderBarChart('Gas Gesamt', 'm³', $d['gasTotal'])
-            . $this->renderBarChart('Strom Gesamt', 'kWh', $d['powerTotal']);
-
-        $updatedEsc = htmlspecialchars($d['updated'], ENT_QUOTES);
-        $initJson   = json_encode($d);
-
-        return <<<HTML
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-html{height:100%}
-*{box-sizing:border-box;margin:0;padding:0}
-body{overflow-y:auto;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;background:#0d1b2a;color:#d0e8ff;display:flex;flex-direction:column;padding:10px;gap:10px}
-.header{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:14px;font-weight:600;border-bottom:1px solid #1e3a5f;padding-bottom:6px;flex:none}
-.updated{font-size:10px;color:#3a5a7a;font-weight:400}
-.badge{padding:3px 8px;border-radius:12px;font-size:12px;border:1px solid transparent;white-space:nowrap}
-.badge-off{background:#1a2535;border-color:#2a3a50;color:#4a6a8a}
-.badge-warn{background:#4a2010;border-color:#8a4020;color:#f08060}
-.badge-on{background:#12405a;border-color:#2a7aa0;color:#7ec8f0}
-.status-row{display:flex;gap:6px;flex-wrap:wrap;flex:none}
-.section-label{font-size:11px;font-weight:700;color:#8aa8c8;text-transform:uppercase;letter-spacing:.04em;flex:none;border-bottom:1px solid #1e3a5f;padding-bottom:3px}
-.current-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;flex:none}
-.cur-tile{display:flex;flex-direction:column;gap:1px;background:#131f33;border-radius:8px;padding:6px 8px}
-.cur-label{font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:.03em}
-.cur-value{font-size:15px;font-weight:700;color:#d0e8ff}
-.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:none}
-.chart-wrap{flex:none;display:flex;flex-direction:column;gap:2px}
-.chart-label{font-size:9px;color:#4a6a8a;text-transform:uppercase;letter-spacing:.02em}
-.chart-inner{position:relative}
-.chart-inner svg{width:100%;height:40px;background:#131f33;border-radius:6px;display:block}
-.chart-max,.chart-min{position:absolute;right:3px;font-size:8px;color:#7ec8f0;background:rgba(13,27,42,.7);padding:0 3px;border-radius:3px}
-.chart-max{top:2px}
-.chart-min{bottom:2px}
-.hk-block{display:flex;flex-direction:column;gap:6px;flex:none;background:#0f1c30;border-radius:10px;padding:8px}
-.hk-title{font-size:12px;font-weight:700;color:#d0e8ff}
-.hk-main-row{display:flex;align-items:center;justify-content:center;gap:14px}
-.curve-col{display:flex;flex-direction:column;gap:4px}
-.curve-item{display:flex;flex-direction:column;gap:1px;background:#131f33;border-radius:8px;padding:4px 10px;min-width:64px}
-.curve-label{font-size:9px;color:#4a6a8a;text-transform:uppercase;letter-spacing:.03em}
-.curve-value{font-size:13px;font-weight:700;color:#d0e8ff}
-.mode-row{display:flex;gap:4px;flex-wrap:wrap}
-.mode-btn{flex:1;min-width:60px;background:#1a2535;border:1px solid #2a3a50;color:#8aa8c8;border-radius:6px;font-size:10px;padding:5px 2px;cursor:pointer}
-.mode-btn.mode-active{background:#1e4a6e;border-color:#3a8abf;color:#7ec8f0;font-weight:700}
-.dial-row{display:flex;gap:12px;justify-content:center}
-.dial{display:flex;flex-direction:column;align-items:center;gap:2px;width:100px;touch-action:none}
-.dial-svg{width:80px;height:80px;cursor:pointer}
-.dial-value{font-size:15px;font-weight:700;margin-top:-48px;pointer-events:none}
-.dial-label{font-size:10px;color:#8aa8c8;margin-top:30px}
-.chart-card{background:#131f33;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;gap:4px}
-.chart-card-label{font-size:11px;font-weight:700;color:#8aa8c8}
-.bar-row{display:flex;justify-content:space-around;align-items:flex-end}
-.bar-col{display:flex;flex-direction:column;align-items:center;gap:2px}
-.bar-value{font-size:10px;font-weight:700;color:#d0e8ff}
-.bar-prev{font-size:8px;font-weight:400;color:#4a6a8a;min-height:10px}
-.bar-track{width:22px;height:60px;display:flex;align-items:flex-end}
-.bar-fill-v{width:100%;background:linear-gradient(180deg,#7ec8f0,#3a8abf);border-radius:3px 3px 0 0;transition:height .4s}
-.bar-xlabel{font-size:9px;color:#4a6a8a}
-.chart-card-year{font-size:10px;color:#4a6a8a;text-align:right}
-.consumption-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:none}
-</style>
-</head>
-<body>
-<div class="header">
-  <span>🔥 Heizung <span id="updated" class="updated">Stand {$updatedEsc}</span></span>
-  <span id="burner_badge" class="badge {$burnerCls}">{$burnerText}</span>
-</div>
-
-<div class="status-row">{$primPumpBadge}{$circPumpBadge}</div>
-
-<div class="hk-block">
-  <div id="hk1_title" class="hk-title">{$hk1Title}</div>
-  {$hk1Modes}
-  <div class="hk-main-row">
-    <div class="dial-row">{$hk1Dials}</div>
-    {$hk1CurveInfo}
-  </div>
-</div>
-
-<div class="current-grid">{$statTiles}</div>
-
-<div class="charts-grid">{$charts}</div>
-
-<div class="hk-block">
-  <div id="hk2_title" class="hk-title">{$hk2Title}</div>
-  {$hk2Modes}
-  <div class="hk-main-row">
-    <div class="dial-row">{$hk2Dials}</div>
-    {$hk2CurveInfo}
-  </div>
-</div>
-
-<div class="hk-block">
-  <div class="hk-title">Warmwasser</div>
-  <div class="dial-row">{$dhwDial}</div>
-</div>
-
-<div class="section-label">Verbrauch</div>
-<div class="consumption-grid">{$consumption}</div>
-
-<script>
-// WebFront injects its own body{margin-top:...;margin-bottom:...} (reserved
-// space for the tile's title/expand-icon overlay). Measure it and size body
-// to exactly fill what's left instead of guessing a fixed pixel value.
-(function() {
-  var cs = getComputedStyle(document.body);
-  var vExtra = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-  document.body.style.height = 'calc(100% - ' + vExtra + 'px)';
-})();
-
-var state = {$initJson};
-var dialRoots = {};
-
-function setText(id, text) {
-  var el = document.getElementById(id);
-  if (el) el.textContent = text;
+        $css = <<<'CSS'
+.chart-tile,.hk,.bars-tile{justify-content:flex-start}
+.chart{position:relative;margin-top:2px;min-height:40px}
+.chart svg{width:100%;height:40px;display:block}
+.ch-max,.ch-min{position:absolute;right:2px;font-size:var(--tk-fs-meta);color:var(--tk-accent);background:rgba(13,27,42,.75);padding:0 3px;border-radius:3px}
+.ch-max{top:0}.ch-min{bottom:0}
+.dials{flex-direction:row;justify-content:space-around;align-items:center}
+.dial{position:relative;width:96px;height:96px;flex:none;touch-action:none}
+.dial-svg{width:96px;height:96px;display:block;cursor:pointer}
+.dial-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.dial-value{font-size:16px;font-weight:700}
+.bars{display:flex;justify-content:space-around;align-items:flex-end;margin-top:4px}
+.bar{display:flex;flex-direction:column;align-items:center;gap:1px}
+.bar-v{font-size:var(--tk-fs-label);font-weight:700}
+.bar-track{width:22px;height:56px;display:flex;align-items:flex-end}
+.bar-fill{width:100%;background:linear-gradient(180deg,#7ec8f0,#3a8abf);border-radius:3px 3px 0 0;transition:height .4s}
+.year{text-align:right}
+CSS;
+        $js = <<<'JS'
+function pick(ident, btn) {
+  Array.prototype.forEach.call(btn.parentElement.children, function (b) { b.classList.toggle('tk-on', b === btn); });
+  requestAction(ident, btn.getAttribute('data-value'));
 }
-
-function renderMiniChart(prefix, series) {
-  var poly = document.getElementById(prefix + '_poly');
-  if (!poly || !series || series.length < 2) return;
-  var spanSec = 6 * 3600;
-  var startTs = Math.floor(Date.now() / 1000) - spanSec;
-  var vals = series.map(function(p) { return p[1]; });
-  var realMin = Math.min.apply(null, vals), realMax = Math.max.apply(null, vals);
-  var min = realMin, max = realMax;
-  if (max - min < 1.0) { var mid = (max + min) / 2; min = mid - 0.5; max = mid + 0.5; }
-  var pad = (max - min) * 0.15; min -= pad; max += pad;
-  var w = 300, h = 60;
-  var pts = series.map(function(p) {
-    var x = Math.max(0, Math.min(w, (p[0] - startTs) / spanSec * w));
-    var y = h - ((p[1] - min) / (max - min)) * h;
-    return x.toFixed(1) + ',' + y.toFixed(1);
-  }).join(' ');
-  poly.setAttribute('points', pts);
-  setText(prefix + '_max', realMax.toFixed(1).replace('.', ',') + '°');
-  setText(prefix + '_min', realMin.toFixed(1).replace('.', ',') + '°');
+function seg(ident, value) {
+  var g = tk.el(ident + '_seg');
+  if (g) Array.prototype.forEach.call(g.children, function (b) { b.classList.toggle('tk-on', b.getAttribute('data-value') === String(value)); });
 }
-
-function valueToThumb(value, min, max) {
-  var frac = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
-  var angleDeg = -135 + frac * 270;
-  var rad = angleDeg * Math.PI / 180;
-  return { x: 60 + 45 * Math.sin(rad), y: 60 - 45 * Math.cos(rad) };
-}
-
-function initDial(root) {
-  var svg = root.querySelector('.dial-svg');
-  var thumb = root.querySelector('.dial-thumb');
-  var valueEl = root.querySelector('.dial-value');
-  var min = parseFloat(root.dataset.min);
-  var max = parseFloat(root.dataset.max);
-  var step = parseFloat(root.dataset.step);
-  var ident = root.dataset.ident;
-  var dragging = false;
-  var currentValue = parseFloat(root.dataset.value);
-
-  function svgPoint(clientX, clientY) {
-    var pt = svg.createSVGPoint();
-    pt.x = clientX; pt.y = clientY;
-    var ctm = svg.getScreenCTM();
-    if (!ctm) return { x: 60, y: 60 };
-    return pt.matrixTransform(ctm.inverse());
+// Soll-Drehregler: Ziehen setzt, Loslassen schreibt
+var dials = {};
+document.querySelectorAll('.dial').forEach(function (root) {
+  var svg = root.querySelector('.dial-svg'), thumb = root.querySelector('.dial-thumb'), val = root.querySelector('.dial-value');
+  var min = +root.dataset.min, max = +root.dataset.max, step = +root.dataset.step, cur = +root.dataset.value, drag = false, ident = root.dataset.ident;
+  function show(v) {
+    var f = max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0, r = (-135 + f * 270) * Math.PI / 180;
+    thumb.setAttribute('cx', (60 + 45 * Math.sin(r)).toFixed(1)); thumb.setAttribute('cy', (60 - 45 * Math.cos(r)).toFixed(1));
+    val.textContent = v.toFixed(1).replace('.', ',') + '°';
   }
-
-  function updateVisual(value) {
-    var pos = valueToThumb(value, min, max);
-    thumb.setAttribute('cx', pos.x.toFixed(1));
-    thumb.setAttribute('cy', pos.y.toFixed(1));
-    if (valueEl) valueEl.textContent = value.toFixed(1).replace('.', ',') + '°';
+  function at(e) {
+    var pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; var m = svg.getScreenCTM(); if (!m) return;
+    var p = pt.matrixTransform(m.inverse()), a = Math.max(-135, Math.min(135, Math.atan2(p.x - 60, 60 - p.y) * 180 / Math.PI));
+    cur = Math.round((min + (a + 135) / 270 * (max - min)) / step) * step; show(cur);
   }
+  svg.addEventListener('pointerdown', function (e) { drag = true; svg.setPointerCapture(e.pointerId); at(e); });
+  svg.addEventListener('pointermove', function (e) { if (drag) at(e); });
+  function end() { if (drag) { drag = false; requestAction(ident, cur); } }
+  svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
+  dials[ident] = { show: show, busy: function () { return drag; } };
+  tk.on(ident, function (v) { if (!drag) show(+v); }); // optimistische Bestaetigung aus RequestAction
+});
+['hk1_mode', 'hk2_mode'].forEach(function (id) { tk.on(id, function (v) { seg(id, v); }); });
 
-  function setFromClient(clientX, clientY) {
-    var p = svgPoint(clientX, clientY);
-    var dx = p.x - 60, dy = p.y - 60;
-    var angleDeg = Math.atan2(dx, -dy) * 180 / Math.PI;
-    angleDeg = Math.max(-135, Math.min(135, angleDeg));
-    var frac = (angleDeg + 135) / 270;
-    var value = min + frac * (max - min);
-    value = Math.round(value / step) * step;
-    currentValue = value;
-    updateVisual(value);
-  }
-
-  svg.addEventListener('pointerdown', function(e) {
-    dragging = true;
-    svg.setPointerCapture(e.pointerId);
-    setFromClient(e.clientX, e.clientY);
-  });
-  svg.addEventListener('pointermove', function(e) {
-    if (dragging) setFromClient(e.clientX, e.clientY);
-  });
-  function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    requestAction(ident, currentValue);
-  }
-  svg.addEventListener('pointerup', endDrag);
-  svg.addEventListener('pointercancel', endDrag);
-
-  root._updateVisual = updateVisual;
-  dialRoots[ident] = root;
-}
-document.querySelectorAll('.dial').forEach(initDial);
-
-function updateModeButtons(ident, value) {
-  var row = document.querySelector('.mode-row[data-ident="' + ident + '"]');
-  if (!row) return;
-  row.querySelectorAll('.mode-btn').forEach(function(btn) {
-    btn.classList.toggle('mode-active', btn.dataset.value === value);
-  });
-}
-
-window.handleMessage = function(raw) {
-  var msg = JSON.parse(raw);
-  var key = msg.key, val = msg.value;
-
-  if (key === '__all__') {
-    state = val;
-    setText('updated', 'Stand ' + val.updated);
-    setText('cur_outside', val.outsideTemp == null ? '–' : val.outsideTemp.toFixed(1).replace('.', ',') + '°C');
-    setText('cur_dhw', val.dhwTemp == null ? '–' : val.dhwTemp.toFixed(1).replace('.', ',') + '°C');
-    setText('cur_hk1', val.hk1Supply == null ? '–' : val.hk1Supply.toFixed(1).replace('.', ',') + '°C');
-    setText('cur_hk2', val.hk2Supply == null ? '–' : val.hk2Supply.toFixed(1).replace('.', ',') + '°C');
-    setText('cur_hours', val.burnerHours == null ? '–' : Math.round(val.burnerHours) + ' h');
-
-    var badge = document.getElementById('burner_badge');
-    if (badge) {
-      badge.className = 'badge ' + (val.burnerActive ? 'badge-warn' : 'badge-off');
-      badge.textContent = val.burnerActive ? '🔥 Brenner an' : '🔥 Brenner aus';
+var STATES = ['ok', 'warn', 'alarm'], lastHtml = {};
+tk.on('__all__', function (p) {
+  p.ops.forEach(function (o) {
+    var k = o[0], id = o[1], v = o[2];
+    if (k === 't') tk.setText(id, v);
+    else if (k === 'h') { if (lastHtml[id] !== v) { lastHtml[id] = v; tk.setHtml(id, v); } }
+    else if (k === 'g') seg(id, v);
+    else if (k === 'd') { var d = dials[id]; if (d && !d.busy()) d.show(+v); }
+    else if (k === 's') {
+      var card = tk.el(id + '_card'), st = tk.el(id + '_status');
+      if (card) { card.classList.toggle('tk-is-alarm', v === 'alarm'); card.classList.toggle('tk-is-warn', v === 'warn'); }
+      if (st) STATES.forEach(function (s) { st.classList.toggle('tk-' + s, s === v); });
     }
-
-    var primBadge = document.getElementById('primpump_badge');
-    if (primBadge && val.primaryPumpActive != null) {
-      primBadge.className = 'badge ' + (val.primaryPumpActive ? 'badge-on' : 'badge-off');
-      primBadge.textContent = '💧 Primärpumpe: ' + (val.primaryPumpActive ? 'an' : 'aus');
-    }
-    var circBadge = document.getElementById('circpump_badge');
-    if (circBadge && val.circulationPumpActive != null) {
-      circBadge.className = 'badge ' + (val.circulationPumpActive ? 'badge-on' : 'badge-off');
-      circBadge.textContent = '🔄 Zirkulationspumpe: ' + (val.circulationPumpActive ? 'an' : 'aus');
-    }
-
-    setText('hk1_title', val.hk1_name ? val.hk1_name : 'Heizkreis 1');
-    setText('hk2_title', val.hk2_name ? val.hk2_name : 'Heizkreis 2');
-
-    function fmt1(v) { return v == null ? '–' : v.toFixed(1).replace('.', ','); }
-    setText('hk1_shift', fmt1(val.hk1_shift));
-    setText('hk1_slope', fmt1(val.hk1_slope));
-    setText('hk2_shift', fmt1(val.hk2_shift));
-    setText('hk2_slope', fmt1(val.hk2_slope));
-
-    renderMiniChart('chart_outside', val.histOutside);
-    renderMiniChart('chart_hk1', val.histHk1);
-    renderMiniChart('chart_hk2', val.histHk2);
-    renderMiniChart('chart_dhw', val.histDhw);
-
-    updateModeButtons('hk1_mode', val.hk1_mode);
-    updateModeButtons('hk2_mode', val.hk2_mode);
-
-    ['hk1_normal', 'hk1_reduced', 'hk2_normal', 'hk2_reduced', 'dhw_target'].forEach(function(id) {
-      if (val[id] != null && dialRoots[id]) dialRoots[id]._updateVisual(val[id]);
-    });
-  } else if (dialRoots[key]) {
-    dialRoots[key]._updateVisual(val);
-  } else if (key === 'hk1_mode' || key === 'hk2_mode') {
-    updateModeButtons(key, val);
-  }
-};
-</script>
-</body>
-</html>
-HTML;
+  });
+});
+JS;
+        return $this->tkPage('Heizung', '🔥', $v['updated'], "<div class=\"tk-grid\">{$body}</div>", $css, $js, 'null');
     }
 }
