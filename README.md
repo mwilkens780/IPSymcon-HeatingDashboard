@@ -11,7 +11,7 @@ https://github.com/mwilkens780/IPSymcon-HeatingDashboard
 
 ## Konfiguration
 
-Alle Felder sind mit den Objekt-IDs dieser Installation vorbelegt (VitoConnect-Instanz), bei Bedarf über die Variablen-Auswahl anpassbar.
+Nach dem Anlegen der Instanz einmalig die Variablen der VitoConnect-Instanz über die Variablen-Auswahl zuweisen.
 
 ## Funktionsweise
 

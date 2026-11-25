@@ -38,14 +38,14 @@ class HeatingDashboard extends IPSModule
 
         $this->RegisterPropertyInteger('update_interval', 300);
 
-        // Defaults pre-filled with this installation's actual VitoConnect
-        // object IDs so the module works out of the box.
-        $this->RegisterPropertyInteger('var_outside_temp', 15558);
-        $this->RegisterPropertyInteger('var_dhw_temp',      22752);
-        $this->RegisterPropertyInteger('var_hk1_supply',    22838);
-        $this->RegisterPropertyInteger('var_hk2_supply',    20540);
-        $this->RegisterPropertyInteger('var_burner_active', 26460);
-        $this->RegisterPropertyInteger('var_burner_hours',  26950);
+        // Keine installationsspezifischen Vorbelegungen: alle VitoConnect-
+        // Variablen werden im Konfigurationsformular ausgewaehlt (0 = nicht zugeordnet).
+        $this->RegisterPropertyInteger('var_outside_temp', 0);
+        $this->RegisterPropertyInteger('var_dhw_temp',      0);
+        $this->RegisterPropertyInteger('var_hk1_supply',    0);
+        $this->RegisterPropertyInteger('var_hk2_supply',    0);
+        $this->RegisterPropertyInteger('var_burner_active', 0);
+        $this->RegisterPropertyInteger('var_burner_hours',  0);
         // Boiler-level status flags, same class of data as burner_active above
         // (single global value, not reachable from any other configured
         // variable's ident/parent) — need their own reference, unlike the
@@ -53,35 +53,35 @@ class HeatingDashboard extends IPSModule
         $this->RegisterPropertyInteger('var_primary_pump',     0);
         $this->RegisterPropertyInteger('var_circulation_pump', 0);
 
-        $this->RegisterPropertyInteger('var_hk1_normal_temp',  27514);
-        $this->RegisterPropertyInteger('var_hk1_reduced_temp', 45743);
-        $this->RegisterPropertyInteger('var_hk1_mode',         59120);
+        $this->RegisterPropertyInteger('var_hk1_normal_temp',  0);
+        $this->RegisterPropertyInteger('var_hk1_reduced_temp', 0);
+        $this->RegisterPropertyInteger('var_hk1_mode',         0);
 
-        $this->RegisterPropertyInteger('var_hk2_normal_temp',  31544);
-        $this->RegisterPropertyInteger('var_hk2_reduced_temp', 27674);
-        $this->RegisterPropertyInteger('var_hk2_mode',         29671);
+        $this->RegisterPropertyInteger('var_hk2_normal_temp',  0);
+        $this->RegisterPropertyInteger('var_hk2_reduced_temp', 0);
+        $this->RegisterPropertyInteger('var_hk2_mode',         0);
 
-        $this->RegisterPropertyInteger('var_dhw_target_temp', 42574);
+        $this->RegisterPropertyInteger('var_dhw_target_temp', 0);
 
-        $this->RegisterPropertyInteger('var_gas_heating_day',   22721);
-        $this->RegisterPropertyInteger('var_gas_heating_week',  44274);
-        $this->RegisterPropertyInteger('var_gas_heating_month', 55779);
-        $this->RegisterPropertyInteger('var_gas_heating_year',  33776);
+        $this->RegisterPropertyInteger('var_gas_heating_day',   0);
+        $this->RegisterPropertyInteger('var_gas_heating_week',  0);
+        $this->RegisterPropertyInteger('var_gas_heating_month', 0);
+        $this->RegisterPropertyInteger('var_gas_heating_year',  0);
 
-        $this->RegisterPropertyInteger('var_gas_dhw_day',   26190);
-        $this->RegisterPropertyInteger('var_gas_dhw_week',  20056);
-        $this->RegisterPropertyInteger('var_gas_dhw_month', 47496);
-        $this->RegisterPropertyInteger('var_gas_dhw_year',  49979);
+        $this->RegisterPropertyInteger('var_gas_dhw_day',   0);
+        $this->RegisterPropertyInteger('var_gas_dhw_week',  0);
+        $this->RegisterPropertyInteger('var_gas_dhw_month', 0);
+        $this->RegisterPropertyInteger('var_gas_dhw_year',  0);
 
-        $this->RegisterPropertyInteger('var_gas_total_day',   33436);
-        $this->RegisterPropertyInteger('var_gas_total_week',  15240);
-        $this->RegisterPropertyInteger('var_gas_total_month', 48368);
-        $this->RegisterPropertyInteger('var_gas_total_year',  53846);
+        $this->RegisterPropertyInteger('var_gas_total_day',   0);
+        $this->RegisterPropertyInteger('var_gas_total_week',  0);
+        $this->RegisterPropertyInteger('var_gas_total_month', 0);
+        $this->RegisterPropertyInteger('var_gas_total_year',  0);
 
-        $this->RegisterPropertyInteger('var_power_total_day',   47704);
-        $this->RegisterPropertyInteger('var_power_total_week',  34473);
-        $this->RegisterPropertyInteger('var_power_total_month', 26539);
-        $this->RegisterPropertyInteger('var_power_total_year',  57870);
+        $this->RegisterPropertyInteger('var_power_total_day',   0);
+        $this->RegisterPropertyInteger('var_power_total_week',  0);
+        $this->RegisterPropertyInteger('var_power_total_month', 0);
+        $this->RegisterPropertyInteger('var_power_total_year',  0);
 
         // VitoConnect's temperature sensors aren't archived (checked), so this
         // module keeps its own rolling sample cache instead of relying on
